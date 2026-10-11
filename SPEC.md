@@ -1260,3 +1260,29 @@ preserves strict separation between domain logic and rendering, and can
 run and be tested offline without Gemini credentials. Any deviation from
 the public interfaces or state rules above must be documented and
 covered by tests.
+
+
+## 13. Revision 1.1 (after first UI review)
+
+### 13.1 Layout changes
+- Speech bubble moves to the right panel, below the scoreboard (x=940, y=400, w=316, h=260),
+  with BUN/RĂU buttons at its bottom. Scoreboard becomes compact (x=940, y=150, w=316, h=240).
+- Classroom area uses the full left side (x=20, y=150, w=900, h=510).
+- Desk columns centered at x=170, 455, 740; rows centered at y=300 and y=530.
+- Student status indicator (thinking dots, raised hand, rank badge, ERR) is drawn ABOVE the head;
+  the name tag is drawn BELOW the desk. Labels must never overlap.
+- Do not use ✓/✗ glyphs (font lacks them); draw icons with pygame primitives or use text only.
+
+### 13.2 Answer order (new feature)
+- Each round records the order in which agents reach READY: answer_rank 1..N and latency in seconds.
+- Ranks are assigned only in Classroom.poll_results() on the main thread, in queue order.
+- ERROR agents and stale results do not receive or consume a rank. New round resets ranks.
+- GUI: badge "#1", "#2"... above each READY/ANSWERED student (gold/silver/bronze tint for 1–3),
+  bubble header "Name — locul N · X,Y s", status line "Primul a răspuns: Name".
+- History stores answer_rank and latency per agent.
+
+### 13.3 Readable mock answers
+- No disclaimer inside the answer text; the bubble header shows a small "DEMO" tag for mock answers.
+- MockProvider classifies the question (greeting, personal/opinion, definition, why, how,
+  quantity, yes/no, comparison, other) and answers in natural Romanian, 2–4 sentences,
+  using the question topic, with a distinct personality per student.
