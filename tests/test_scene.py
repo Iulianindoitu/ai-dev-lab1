@@ -136,6 +136,19 @@ def test_widgets_connect_to_classroom_round_selection_and_grading() -> None:
         assert scene.speech_bubble.visible
         assert scene.good_button.enabled
 
+        selected = classroom.get_selected_agent()
+        assert selected is not None
+        expected_latency = f"{selected.latency_seconds:.1f}".replace(".", ",")
+        assert scene.speech_bubble._title == (
+            f"{selected.name} — locul 1 · {expected_latency} s"
+        )
+        assert scene.speech_bubble._demo
+        assert scene._first_answer_name == agents[0].name
+        assert scene._teacher_walk.moving
+        scene.update(0.35)
+        assert scene._teacher_sprite.position != (875, 612)
+        scene.draw()
+
         scene.handle_event(
             pygame.event.Event(
                 pygame.MOUSEBUTTONDOWN,
@@ -147,6 +160,8 @@ def test_widgets_connect_to_classroom_round_selection_and_grading() -> None:
         assert agents[0].score == 1
         assert agents[0].state.value == "answered"
         assert not scene.good_button.enabled
+        assert scene._floating_score is not None
+        assert scene._floating_score.text == "+1"
 
         scene.handle_event(
             pygame.event.Event(
@@ -154,6 +169,9 @@ def test_widgets_connect_to_classroom_round_selection_and_grading() -> None:
             )
         )
         assert classroom.get_selected_agent() is agents[1]
+        assert scene.speech_bubble._title.startswith("Gemini — locul 2 · ")
+        assert scene.speech_bubble._demo
+        assert scene._first_answer_name == agents[0].name
         assert scene.bad_button.enabled
         scene.handle_event(
             pygame.event.Event(
@@ -164,5 +182,7 @@ def test_widgets_connect_to_classroom_round_selection_and_grading() -> None:
         )
         assert agents[1].score == -1
         assert agents[1].state.value == "answered"
+        assert scene._floating_score is not None
+        assert scene._floating_score.text == "-1"
     finally:
         scene.shutdown()

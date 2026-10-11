@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from core.classroom import Classroom, RoundRecord
-from core.models import Agent, AgentState, Grade
+from core.classroom import AnswerResult, Classroom, RoundRecord
+from core.models import Agent, AgentState, Answer, Grade
 from core.scoreboard import Scoreboard
 from providers.base import AnswerProvider
 
@@ -137,6 +137,76 @@ def test_provider_failure_moves_agent_to_error() -> None:
         classroom.ask("Întrebare")
         wait_for_states(classroom, agents, AgentState.ERROR)
         assert all(agent.error_message for agent in agents)
+        assert all(agent.answer_rank is None for agent in agents)
+        assert all(agent.latency_seconds is None for agent in agents)
+    finally:
+        classroom.close()
+
+
+def test_ranks_are_assigned_in_queue_arrival_order() -> None:
+    release_provider = threading.Event()
+
+    class BlockingProvider(AnswerProvider):
+        def get_answer(self, question: str, agent: Agent) -> str:
+            release_provider.wait(timeout=2)
+            return f"provider result ignored: {question}, {agent.name}"
+
+    classroom, agents, _, history = make_classroom(BlockingProvider())
+    try:
+        round_id = classroom.ask("Întrebare")
+        submitted_at = dict(classroom._request_started_at)
+        answer_order = [agents[1], agents[0]]
+        for agent in answer_order:
+            answer = Answer(
+                agent_id=agent.id,
+                question="Întrebare",
+                text=f"Răspuns {agent.name}",
+                created_at="2026-10-11T15:00:00+03:00",
+                provider="test",
+                round_id=round_id,
+            )
+            classroom._results.put(
+                AnswerResult(
+                    round_id=round_id,
+                    agent_id=agent.id,
+                    answer=answer,
+                    error_message=None,
+                    completed_at=submitted_at[(round_id, agent.id)] + 0.25,
+                )
+            )
+
+        classroom.poll()
+
+        assert answer_order[0].answer_rank == 1
+        assert answer_order[1].answer_rank == 2
+        assert answer_order[0].latency_seconds == pytest.approx(0.25)
+        assert answer_order[1].latency_seconds == pytest.approx(0.25)
+        records = {record.agent_id: record for record in history.rounds[round_id].agents}
+        assert records[answer_order[0].id].answer_rank == 1
+        assert records[answer_order[1].id].answer_rank == 2
+    finally:
+        release_provider.set()
+        classroom.close()
+
+
+def test_stale_and_error_results_do_not_consume_answer_ranks() -> None:
+    provider = ImmediateProvider(fail=True)
+    classroom, agents, _, _ = make_classroom(provider)
+    try:
+        classroom.ask("Întrebare")
+        wait_for_states(classroom, agents, AgentState.ERROR)
+        assert all(agent.answer_rank is None for agent in agents)
+
+        class CurrentProvider(AnswerProvider):
+            def get_answer(self, question: str, agent: Agent) -> str:
+                return f"Răspuns pentru {agent.name}: {question}"
+
+        # A new round starts a fresh ranking sequence.
+        classroom._provider = CurrentProvider()
+        classroom.ask("A doua întrebare")
+        wait_for_states(classroom, agents, AgentState.READY)
+
+        assert sorted(agent.answer_rank for agent in agents) == [1, 2]
     finally:
         classroom.close()
 
@@ -166,6 +236,7 @@ def test_results_from_old_round_are_ignored() -> None:
         assert all(agent.answer is not None for agent in agents)
         assert all(agent.answer.round_id == new_round_id for agent in agents)
         assert all(agent.answer.question == "a doua" for agent in agents)
+        assert sorted(agent.answer_rank for agent in agents) == [1, 2]
     finally:
         release_first.set()
         classroom.close()
@@ -276,6 +347,8 @@ def test_new_round_resets_round_state_and_preserves_scores() -> None:
         assert all(agent.state is AgentState.THINKING for agent in agents)
         assert all(agent.answer is None for agent in agents)
         assert all(agent.graded_round_id is None for agent in agents)
+        assert all(agent.answer_rank is None for agent in agents)
+        assert all(agent.latency_seconds is None for agent in agents)
         assert classroom.get_selected_agent() is None
     finally:
         classroom.close()

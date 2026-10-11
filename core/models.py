@@ -1,5 +1,6 @@
 """Framework-independent domain models and state enums."""
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -63,6 +64,8 @@ class Agent:
     error_message: str | None = None
     score: int = 0
     graded_round_id: str | None = None
+    answer_rank: int | None = None
+    latency_seconds: float | None = None
 
     def __post_init__(self) -> None:
         """Validate the stable identity, RGB color, and initial state."""
@@ -93,6 +96,19 @@ class Agent:
             self.graded_round_id, str
         ):
             raise TypeError("graded_round_id must be a string or None")
+        if self.answer_rank is not None and (
+            not isinstance(self.answer_rank, int)
+            or isinstance(self.answer_rank, bool)
+            or self.answer_rank < 1
+        ):
+            raise ValueError("answer_rank must be a positive integer or None")
+        if self.latency_seconds is not None and (
+            not isinstance(self.latency_seconds, (int, float))
+            or isinstance(self.latency_seconds, bool)
+            or not math.isfinite(self.latency_seconds)
+            or self.latency_seconds < 0
+        ):
+            raise ValueError("latency_seconds must be a finite non-negative number or None")
 
     def reset_for_round(self) -> None:
         """Clear round-specific data and return the agent to IDLE."""
@@ -100,6 +116,8 @@ class Agent:
         self.answer = None
         self.error_message = None
         self.graded_round_id = None
+        self.answer_rank = None
+        self.latency_seconds = None
 
     def set_thinking(self) -> None:
         """Start a new request, clearing data from any previous round."""
@@ -107,6 +125,8 @@ class Agent:
         self.answer = None
         self.error_message = None
         self.graded_round_id = None
+        self.answer_rank = None
+        self.latency_seconds = None
 
     def set_ready(self, answer: Answer) -> None:
         """Store a matching answer and transition from THINKING to READY."""
