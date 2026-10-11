@@ -8,6 +8,11 @@ from core.models import Agent, AgentState
 
 _INK = (39, 48, 55)
 _PANEL = (250, 248, 241)
+_RANK_COLORS = {
+    1: (211, 164, 45),
+    2: (133, 143, 153),
+    3: (173, 111, 72),
+}
 _AGENT_COLORS: dict[str, tuple[int, int, int]] = {
     "chatgpt": (70, 132, 195),
     "gemini": (219, 157, 52),
@@ -65,10 +70,24 @@ class StudentSprite:
             surface, skin, (center_x + 18, desk.top + 4), (center_x + 28, desk.top + 17), 6
         )
 
-        state_text, state_color = _STATE_LABELS[self.agent.state]
-        status = self.status_font.render(state_text, True, state_color)
-        status_rect = status.get_rect(midbottom=(center_x, head_center[1] - 25))
-        surface.blit(status, status_rect)
+        if (
+            self.agent.answer_rank is not None
+            and self.agent.state in (AgentState.READY, AgentState.ANSWERED)
+        ):
+            badge_color = _RANK_COLORS.get(self.agent.answer_rank, (94, 105, 109))
+            badge = self.status_font.render(
+                f"#{self.agent.answer_rank}", True, (255, 255, 255)
+            )
+            badge_rect = badge.get_rect(
+                center=(center_x, head_center[1] - 31)
+            ).inflate(14, 8)
+            pygame.draw.rect(surface, badge_color, badge_rect, border_radius=9)
+            surface.blit(badge, badge.get_rect(center=badge_rect.center))
+        elif self.agent.state is not AgentState.THINKING:
+            state_text, state_color = _STATE_LABELS[self.agent.state]
+            status = self.status_font.render(state_text, True, state_color)
+            status_rect = status.get_rect(midbottom=(center_x, head_center[1] - 25))
+            surface.blit(status, status_rect)
 
         tag_width = min(
             desk.width - 12,

@@ -9,10 +9,13 @@ import sys
 import pygame
 from dotenv import load_dotenv
 
-from core.classroom import Classroom, RoundRecord
-from core.models import Agent, Grade
+from core.classroom import Classroom
+from core.history import HistoryStore
+from core.models import Agent
 from core.scoreboard import Scoreboard
 from gui.scene import WINDOW_HEIGHT, WINDOW_WIDTH, ClassroomScene
+from providers.base import AgentProviderRouter
+from providers.gemini import GeminiProvider
 from providers.mock import MockProvider
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,28 +27,6 @@ _STUDENTS = (
     ("claude", "Claude", (207, 119, 102)),
     ("deepseek", "DeepSeek", (67, 165, 174)),
 )
-
-
-class _InMemoryHistory:
-    """Keep this static-demo shell compatible with the classroom controller."""
-
-    def __init__(self) -> None:
-        self.rounds: dict[str, RoundRecord] = {}
-
-    def save_round(self, round_record: RoundRecord) -> None:
-        self.rounds[round_record.round_id] = round_record
-
-    def update_grade(
-        self, round_id: str, agent_id: str, grade: Grade, score_after: int
-    ) -> None:
-        record = self.rounds[round_id]
-        for agent_record in record.agents:
-            if agent_record.agent_id == agent_id:
-                agent_record.state = "answered"
-                agent_record.grade = grade.value
-                agent_record.score_after = score_after
-                return
-        raise KeyError(agent_id)
 
 
 def _create_agents() -> list[Agent]:
@@ -88,14 +69,34 @@ def main() -> int:
         clock = pygame.time.Clock()
 
         agents = _create_agents()
+        history = HistoryStore(
+            os.getenv("AI_CLASSROOM_HISTORY_PATH", "results/history.json")
+        )
+        saved_scores = history.load_scores()
+        for agent in agents:
+            agent.score = saved_scores.get(agent.id, 0)
         scoreboard = Scoreboard(agents)
+        mock_provider = MockProvider(seed=seed)
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if api_key:
+            provider = AgentProviderRouter(
+                default_provider=mock_provider,
+                agent_providers={
+                    "gemini": GeminiProvider(api_key, fallback=mock_provider)
+                },
+            )
+            _LOGGER.info(
+                "AI Classroom pornit cu Gemini pentru elevul Gemini și fallback offline."
+            )
+        else:
+            provider = mock_provider
+            _LOGGER.info("AI Classroom pornit în modul demo offline.")
         classroom = Classroom(
             agents=agents,
-            provider=MockProvider(seed=seed),
+            provider=provider,
             scoreboard=scoreboard,
-            history=_InMemoryHistory(),
+            history=history,
         )
-        _LOGGER.info("AI Classroom pornit în modul demo offline.")
         ClassroomScene(classroom, screen, clock).run()
         return 0
     except Exception:

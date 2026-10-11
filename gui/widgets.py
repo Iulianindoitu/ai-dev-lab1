@@ -189,22 +189,27 @@ class SpeechBubble:
         self.rect = pygame.Rect(rect)
         self.font = font
         self.title_font = title_font or font
+        self.demo_font = pygame.font.Font(None, 14)
         self.background = background
         self.footer_height = footer_height
         self._text = ""
         self._title = ""
+        self._demo = False
         self._lines: list[str] = []
         self._scroll_offset = 0
         self._line_height = max(1, font.get_linesize())
 
-    def set_text(self, text: str, title: str = "") -> None:
+    def set_text(self, text: str, title: str = "", *, demo: bool = False) -> None:
         """Set answer content, optionally including a speaker heading."""
         if not isinstance(text, str):
             raise TypeError("speech bubble text must be a string")
         if not isinstance(title, str):
             raise TypeError("speech bubble title must be a string")
+        if not isinstance(demo, bool):
+            raise TypeError("demo must be a boolean")
         self._text = text
         self._title = title
+        self._demo = demo
         self._lines = self._wrap_text(text, self.font, self.rect.width - 36)
         self._scroll_offset = 0
 
@@ -246,8 +251,33 @@ class SpeechBubble:
         pygame.draw.rect(surface, self.background, self.rect, border_radius=12)
         pygame.draw.rect(surface, _BORDER, self.rect, width=2, border_radius=12)
         title = self._title or "Răspuns"
+        heading_area = pygame.Rect(
+            self.rect.left + 16,
+            self.rect.top + 10,
+            self.rect.width - (92 if self._demo else 32),
+            self.title_font.get_height() + 4,
+        )
         heading = self.title_font.render(title, True, _INK)
-        surface.blit(heading, (self.rect.left + 16, self.rect.top + 10))
+        if heading.get_width() > heading_area.width:
+            visible_title = title
+            while (
+                visible_title
+                and self.title_font.size(f"{visible_title}…")[0]
+                > heading_area.width
+            ):
+                visible_title = visible_title[:-1]
+            heading = self.title_font.render(f"{visible_title}…", True, _INK)
+        surface.blit(heading, heading_area.topleft)
+        if self._demo:
+            tag_rect = pygame.Rect(
+                self.rect.right - 68,
+                self.rect.top + 9,
+                52,
+                max(20, self.title_font.get_height() + 2),
+            )
+            pygame.draw.rect(surface, (231, 190, 90), tag_rect, border_radius=7)
+            tag = self.demo_font.render("DEMO", True, (76, 57, 23))
+            surface.blit(tag, tag.get_rect(center=tag_rect.center))
 
         viewport = pygame.Rect(
             self.rect.left + 16,

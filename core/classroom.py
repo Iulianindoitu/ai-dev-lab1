@@ -33,6 +33,8 @@ class AgentRoundRecord:
     error_message: str | None = None
     grade: str | None = None
     score_after: int | None = None
+    answer_rank: int | None = None
+    latency_seconds: float | None = None
 
 
 @dataclass
@@ -162,6 +164,8 @@ class Classroom:
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._results: queue.Queue[AnswerResult] = queue.Queue()
         self._deadlines: dict[tuple[str, str], float] = {}
+        self._request_started_at: dict[tuple[str, str], float] = {}
+        self._next_answer_rank = 1
         self._round_id: str | None = None
         self._round_record: RoundRecord | None = None
         self._selected_agent_id: str | None = None
@@ -189,21 +193,27 @@ class Classroom:
             agent.set_thinking()
         self._round_id = round_id
         self._selected_agent_id = None
+        self._next_answer_rank = 1
         self._round_record = RoundRecord(
             round_id=round_id,
             question=normalized_question,
             started_at=started_at,
             agents=[
-                AgentRoundRecord(agent_id=agent.id, state=AgentState.THINKING.value)
+                AgentRoundRecord(
+                    agent_id=agent.id,
+                    state=AgentState.THINKING.value,
+                )
                 for agent in self._agents
             ],
         )
 
         self._discard_queued_results()
         self._deadlines.clear()
+        self._request_started_at.clear()
         for agent in self._agents:
             deadline_key = (round_id, agent.id)
             submitted_at = time.monotonic()
+            self._request_started_at[deadline_key] = submitted_at
             self._deadlines[deadline_key] = submitted_at + self._timeout_seconds
             try:
                 self._executor.submit(
@@ -264,6 +274,15 @@ class Classroom:
                     record.state = AgentState.READY.value
                     record.answer_text = answer.text
                     record.provider = answer.provider
+                    request_started_at = self._request_started_at.pop(
+                        (result.round_id, result.agent_id)
+                    )
+                    latency_seconds = max(0.0, result.completed_at - request_started_at)
+                    agent.answer_rank = self._next_answer_rank
+                    agent.latency_seconds = latency_seconds
+                    record.answer_rank = self._next_answer_rank
+                    record.latency_seconds = latency_seconds
+                    self._next_answer_rank += 1
             else:
                 error_message = result.error_message or _PROVIDER_ERROR_MESSAGE
                 agent.set_error(error_message)
@@ -271,6 +290,7 @@ class Classroom:
                 record.error_message = error_message
 
             self._deadlines.pop((result.round_id, result.agent_id), None)
+            self._request_started_at.pop((result.round_id, result.agent_id), None)
             applied.append(result)
             history_changed = True
 
@@ -288,6 +308,7 @@ class Classroom:
                 record.state = AgentState.ERROR.value
                 record.error_message = _TIMEOUT_MESSAGE
                 self._deadlines.pop(deadline_key, None)
+                self._request_started_at.pop(deadline_key, None)
                 history_changed = True
 
         if history_changed:
@@ -387,9 +408,17 @@ class Classroom:
             text = self._provider.get_answer(question, agent)
             if not isinstance(text, str) or not text.strip():
                 raise ProviderError("Provider returned an empty answer.")
-            provider_name = type(self._provider).__name__.lower()
-            if provider_name.endswith("provider"):
-                provider_name = provider_name[: -len("provider")]
+            provider_name_resolver = getattr(
+                self._provider, "provider_name_for", None
+            )
+            if callable(provider_name_resolver):
+                provider_name = provider_name_resolver(agent)
+            else:
+                provider_name = getattr(self._provider, "name", None)
+                if not isinstance(provider_name, str):
+                    provider_name = type(self._provider).__name__.lower()
+                    if provider_name.endswith("provider"):
+                        provider_name = provider_name[: -len("provider")]
             answer = Answer(
                 agent_id=agent.id,
                 question=question,

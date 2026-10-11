@@ -39,6 +39,8 @@ def test_agent_reset_for_round_clears_round_fields_and_preserves_score() -> None
     agent.set_thinking()
     agent.set_ready(make_answer())
     agent.graded_round_id = "round-1"
+    agent.answer_rank = 2
+    agent.latency_seconds = 1.25
     agent.score = 2
 
     agent.reset_for_round()
@@ -47,6 +49,8 @@ def test_agent_reset_for_round_clears_round_fields_and_preserves_score() -> None
     assert agent.answer is None
     assert agent.error_message is None
     assert agent.graded_round_id is None
+    assert agent.answer_rank is None
+    assert agent.latency_seconds is None
     assert agent.score == 2
 
 
@@ -58,6 +62,8 @@ def test_agent_ready_requires_matching_answer() -> None:
 
     assert agent.state is AgentState.READY
     assert agent.answer == make_answer()
+    assert agent.answer_rank is None
+    assert agent.latency_seconds is None
 
     with pytest.raises(ValueError):
         agent.set_ready(make_answer(agent_id="gemini"))

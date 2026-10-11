@@ -6,6 +6,7 @@ import logging
 
 import pygame
 
+from gui.animations import FloatingScore, RaisedHand, TeacherWalk, ThinkingDots
 from core.classroom import Classroom
 from core.models import AgentState, Grade
 from gui.sprites import StudentSprite, TeacherSprite
@@ -62,6 +63,7 @@ class ClassroomScene:
         self.running = False
         self._shutdown = False
         self._status = "Așteptăm întrebarea profesorului."
+        self._first_answer_name: str | None = None
         self._font = self._load_font(22)
         self._small_font = self._load_font(17)
         self._title_font = self._load_font(30, bold=True)
@@ -105,6 +107,14 @@ class ClassroomScene:
             for index, agent in enumerate(classroom.get_agents())
         }
         self._teacher_sprite = TeacherSprite((875, 612), self._small_font)
+        self._teacher_walk = TeacherWalk(self._teacher_sprite.position)
+        self._thinking_dots = {
+            agent.id: ThinkingDots() for agent in classroom.get_agents()
+        }
+        self._raised_hands = {
+            agent.id: RaisedHand() for agent in classroom.get_agents()
+        }
+        self._floating_score: FloatingScore | None = None
         self._last_agent_states = {
             agent.id: agent.state for agent in classroom.get_agents()
         }
@@ -145,13 +155,22 @@ class ClassroomScene:
 
     def update(self, dt: float) -> None:
         """Poll provider results without waiting for worker completion."""
-        del dt
         try:
             self.classroom.poll()
             self._update_widget_state()
         except Exception:
             _LOGGER.exception("Could not poll classroom results")
             self._status = "A apărut o eroare la actualizarea clasei."
+        for agent in self.classroom.get_agents():
+            if agent.state is AgentState.THINKING:
+                self._thinking_dots[agent.id].update(dt)
+            elif agent.state is AgentState.READY:
+                self._raised_hands[agent.id].update(dt)
+        self._teacher_sprite.position = self._teacher_walk.update(dt)
+        if self._floating_score is not None:
+            self._floating_score.update(dt)
+            if not self._floating_score.active:
+                self._floating_score = None
 
     def draw(self) -> None:
         """Render the blackboard, six desks, students, teacher, and scores."""
@@ -162,6 +181,8 @@ class ClassroomScene:
         self._draw_blackboard()
         self._draw_classroom()
         self._draw_teacher()
+        if self._floating_score is not None:
+            self._floating_score.draw(self.screen, self._score_font)
         self._draw_scoreboard()
         self.question_input.draw(self.screen)
         self._draw_selected_answer()
@@ -197,6 +218,8 @@ class ClassroomScene:
             return
         self.question_input.clear()
         self._selected_agent_id = None
+        self._first_answer_name = None
+        self._teacher_walk.move_to((875, 612))
         self.speech_bubble.set_text("")
         self._status = "Elevii se gândesc..."
 
@@ -206,8 +229,26 @@ class ClassroomScene:
         except (KeyError, ValueError):
             return
         self._selected_agent_id = agent.id
+        desk = self._student_sprites[agent.id].desk_rect
+        self._teacher_walk.move_to(
+            (desk.right + 42, desk.centery + 20)
+        )
         answer_text = agent.answer.text if agent.answer is not None else ""
-        self.speech_bubble.set_text(answer_text, title=agent.name)
+        rank = agent.answer_rank
+        latency = agent.latency_seconds
+        title = agent.name
+        if rank is not None:
+            elapsed = (
+                f"{latency:.1f}".replace(".", ",")
+                if latency is not None
+                else "—"
+            )
+            title = f"{agent.name} — locul {rank} · {elapsed} s"
+        self.speech_bubble.set_text(
+            answer_text,
+            title=title,
+            demo=agent.answer is not None and agent.answer.provider == "mock",
+        )
         self._status = f"{agent.name} a răspuns. Alegeți «Bun» sau «Rău»."
         self._update_widget_state()
 
@@ -223,6 +264,15 @@ class ClassroomScene:
             self._status = str(exc)
             self._update_widget_state()
             return
+        desk = self._student_sprites[agent.id].desk_rect
+        score_color = (
+            (49, 133, 88) if grade is Grade.GOOD else (173, 68, 58)
+        )
+        self._floating_score = FloatingScore(
+            (desk.centerx, desk.top - 95),
+            1 if grade is Grade.GOOD else -1,
+            score_color,
+        )
         label = "Bun" if grade is Grade.GOOD else "Rău"
         delta = "+1" if grade is Grade.GOOD else "-1"
         self._status = f"Răspunsul lui {agent.name} a fost evaluat: {label} ({delta})."
@@ -233,10 +283,21 @@ class ClassroomScene:
         is_ready = selected is not None and selected.state is AgentState.READY
         self.good_button.enabled = is_ready
         self.bad_button.enabled = is_ready
-        for agent in self.classroom.get_agents():
+        agents = self.classroom.get_agents()
+        if self._first_answer_name is None:
+            first_answer = next(
+                (agent for agent in agents if agent.answer_rank == 1),
+                None,
+            )
+            if first_answer is not None:
+                self._first_answer_name = first_answer.name
+        for agent in agents:
             previous_state = self._last_agent_states.get(agent.id)
             if agent.state is not previous_state:
-                if agent.state is AgentState.READY:
+                if (
+                    self._first_answer_name is None
+                    and agent.state is AgentState.READY
+                ):
                     self._status = f"{agent.name} este gata să răspundă."
                 elif agent.state is AgentState.ERROR:
                     self._status = agent.error_message or f"Eroare la elevul {agent.name}."
@@ -289,7 +350,20 @@ class ClassroomScene:
         agents = self.classroom.get_agents()
         for index, desk_rect in enumerate(_DESK_RECTS):
             self._draw_desk(desk_rect)
-            self._student_sprites[agents[index].id].draw(self.screen)
+            agent = agents[index]
+            self._student_sprites[agent.id].draw(self.screen)
+            if agent.state is AgentState.THINKING:
+                self._thinking_dots[agent.id].draw(
+                    self.screen,
+                    (desk_rect.centerx, desk_rect.top - 101),
+                )
+            elif agent.state in (AgentState.READY, AgentState.ANSWERED):
+                self._raised_hands[agent.id].draw(
+                    self.screen,
+                    desk_rect,
+                    _AGENT_COLORS.get(agent.id, agent.color),
+                    bouncing=agent.state is AgentState.READY,
+                )
 
     def _draw_desk(self, rect: pygame.Rect) -> None:
         pygame.draw.rect(self.screen, _DESK_EDGE, rect, border_radius=8)
@@ -347,5 +421,10 @@ class ClassroomScene:
             )
 
     def _draw_status(self) -> None:
-        status = self._font.render(self._status, True, _INK)
+        message = (
+            f"Primul a răspuns: {self._first_answer_name}"
+            if self._first_answer_name is not None
+            else self._status
+        )
+        status = self._font.render(message, True, _INK)
         self.screen.blit(status, (24, 670))
