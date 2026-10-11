@@ -1,0 +1,1 @@
+"""Simple classroom interface animations."""
